@@ -17,7 +17,6 @@ from utils import Visualizer
 from torchnet import meter
 from torch import nn
 from torch.autograd import Variable
-from nltk.translate.bleu_score import corpus_bleu,sentence_bleu
 
 
 MAX_LENGTH = 100
@@ -60,7 +59,7 @@ def evaluate(model, data_iter, loss_function):
         input_, target = Variable(data[:-1, :]), Variable(data[1:, :])
         output,_ = model(input_)
         loss = loss_function(output, target.view(-1))
-        loss_meter.add(loss.data[0])
+        loss_meter.add(loss.item())
 
     return loss_meter.value()[0]
 
@@ -418,118 +417,6 @@ def train_attention(**kwargs):
                 lr = param_group['lr']
                 lr *= 0.5
                 param_group['lr'] = lr
-
-# with attention
-def train_attention_twin(**kwargs):
-
-    for k, v in kwargs.items():
-        setattr(opt, k, v)
-        # setattr(object, name, value) 设置属性值
-
-    vis = Visualizer(env=opt.env)  # 设置visdom的环境变量
-
-    logging.info("============attention_twin的训练过程================")
-
-    # 获取数据
-    train_iter, valid_iter, test_iter, field = load_data()
-    word2ix = field.vocab.stoi
-    ix2word = field.vocab.itos
-
-    # 模型定义
-    model = lstm_att_twin(len(word2ix), 300, 150)
-
-    best_model = model
-    best_valid_loss = float("inf")
-
-    # lambda1 = lambda epoch: epoch // 5
-    # lambda2 = lambda epoch: 0.95 ** epoch
-
-    optimizer = t.optim.Adam(model.parameters(), lr=opt.lr, weight_decay=1e-6)
-    scheduler = t.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min')
-    criterion = nn.NLLLoss()
-
-    if opt.model_path:
-        model.load_state_dict(t.load(opt.model_path))
-
-    if opt.use_gpu:
-        model.cuda()
-        criterion.cuda()
-
-    loss_meter = meter.AverageValueMeter()
-    count = 0
-    for epoch in range(opt.epoch):
-
-        model.train()
-        loss_meter.reset()
-        logging.info("这是第{0}次epoch".format(count + 1))
-        cnt = 0
-
-        use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-
-        for batch in tqdm.tqdm(train_iter):
-            loss = 0
-            # 训练
-            data = batch.text
-            batch_size = data.shape[1]
-            att_hidden = Variable(t.zeros(batch_size, 150), requires_grad=False)  # (batch_size, hidden_dim)
-            pre_hiddens = Variable(t.zeros(batch_size, 1, 150), requires_grad=False)
-            if opt.use_gpu:
-                data = data.cuda()
-                att_hidden = att_hidden.cuda()
-                pre_hiddens = pre_hiddens.cuda()
-
-            optimizer.zero_grad()
-            # 输入和目标错开，CharRNN的做法
-            input_, target_ = Variable(data[:-1, :]), Variable(data[1:, :])
-            max_len = input_.size(0)
-            model.batch_size = batch_size
-            hidden = model.init_hidden()
-            bwd_hidden = model.init_hidden()
-
-            for ii in range(max_len):
-                input = input_[ii]  # (batch_size,)
-                target = target_[ii]
-                output, att_hidden, pre_hidden, hidden, alpha = model(input, att_hidden, pre_hiddens, hidden)
-                # logging.info("第%d次: %s" % (ii, alpha))
-                pre_hidden = pre_hidden.detach()
-                pre_hiddens = t.cat((pre_hiddens, pre_hidden), 1)
-                # topv, topi = decoder_output.topk(1)
-                # decoder_input = topi.squeeze().detach()  # detach from history as input
-                loss += criterion(output, target)
-
-            loss.backward()
-            # 梯度剪裁
-            t.nn.utils.clip_grad_norm(model.parameters(), 5.)
-            optimizer.step()
-
-            loss_meter.add(loss.item()/max_len)
-
-            # 可视化
-            if (1 + cnt) % opt.plot_every == 0:
-                vis.plot('loss', loss_meter.value()[0])
-                # logging.info("训练第%d次batch_plot的loss为: %f" % ((cnt+1)/opt.plot_every, loss_meter.value()[0]))
-            cnt += 1
-
-        count += 1
-
-        valid_loss = evaluate_att(model, valid_iter, criterion)
-        scheduler.step(valid_loss)
-        logging.info("======第%d次验证集的loss为: %f=====" % (count, valid_loss))
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            best_model = model
-            t.save(best_model.state_dict(), '%s%s_%d.pth' % (opt.model_prefix, opt.model, count))
-
-        test_loss = evaluate_att(best_model, test_iter, criterion)
-        logging.info("------测试集的loss为: %f" % test_loss)
-
-        # 学习率减半
-        if epoch in [5, 10, 15]:
-            for param_group in optimizer.param_groups:
-                lr = param_group['lr']
-                lr *= 0.5
-                param_group['lr'] = lr
-
 
 if __name__ == "__main__":
     import fire

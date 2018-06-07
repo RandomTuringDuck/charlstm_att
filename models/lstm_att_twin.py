@@ -62,18 +62,18 @@ class lstm_att_twin(nn.Module):
         self.tanh = nn.Tanh()
         self.out2 = nn.Linear(self.hidden_dim, vocab_size)  #输入是h'_t
 
-        self.bwd_lstm = nn.LSTM(embedding_dim + hidden_dim, self.hidden_dim, num_layers=3, dropout=opt.dropout)
+        self.bwd_lstm = nn.LSTM(embedding_dim, self.hidden_dim, num_layers=3, dropout=opt.dropout)
         self.bwd_out = nn.Linear(self.hidden_dim, vocab_size)
         self.fwd_aff = nn.Linear(self.hidden_dim, self.hidden_dim)
 
     def init_hidden(self):
         #Define the hidden state and the cell, the parameter 2's meaning is two layers of LSTM.
         if opt.use_gpu:
-            return (Variable(torch.zeros(2, self.batch_size, self.hidden_dim).cuda()),
-                    Variable(torch.zeros(2, self.batch_size, self.hidden_dim).cuda()))
+            return (Variable(torch.zeros(3, self.batch_size, self.hidden_dim).cuda()),
+                    Variable(torch.zeros(3, self.batch_size, self.hidden_dim).cuda()))
         else:
-            return (Variable(torch.zeros(2, self.batch_size, self.hidden_dim)),
-                    Variable(torch.zeros(2, self.batch_size, self.hidden_dim)))
+            return (Variable(torch.zeros(3, self.batch_size, self.hidden_dim)),
+                    Variable(torch.zeros(3, self.batch_size, self.hidden_dim)))
 
     def bwd_forward(self, input, hidden):
         embeds = self.embeddings(input)
@@ -83,12 +83,16 @@ class lstm_att_twin(nn.Module):
         h_0, c_0 = hidden
         output, hidden = self.bwd_lstm(embeds, (h_0, c_0))
         vis = output
-
         output = self.bwd_out(output.view(seq_len * batch_size, -1))
+        output = F.log_softmax(output, dim=1)
+        return output, vis
 
-    def fwd_aff(self,input):
-        vis_ = self.fwd_aff(inputput.view(seq_len * batch_size, self.hidden_dim))
+    def fwd_affine(self, input):
+        print('wocao',input.size())
+        seq_len, batch_size, _ = input.size()
+        vis_ = self.fwd_aff(input.view(seq_len * batch_size, self.hidden_dim))
         vis = vis_.view(seq_len, batch_size, self.hidden_dim)
+        return vis
 
     def forward(self, input, att_hidden, pre_hiddens, hidden):
         '''
@@ -106,8 +110,8 @@ class lstm_att_twin(nn.Module):
         # 因为是一个字一个字往里喂的，所以output只有一个hidden state
         pre_hidden = output.transpose(0,1)     # pre_hidden是上一次状态的最后一层隐藏元的值，传回去
         output = output.view(self.batch_size, self.hidden_dim)  # (batch_size, hidden_dim)
-        print(output.size())
-        print(pre_hiddens.size())
+        # print(output.size())
+        # print(pre_hiddens.size())
         context, alpha = self.attention(output, pre_hiddens)  # (batch_size, hidden_dim)
         att_hidden = self.tanh(self.out1(torch.cat((output, context), 1)))
         output = self.out2(att_hidden)
