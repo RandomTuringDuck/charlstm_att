@@ -88,7 +88,6 @@ class lstm_att_twin(nn.Module):
         return output, vis
 
     def fwd_affine(self, input):
-        print('wocao',input.size())
         seq_len, batch_size, _ = input.size()
         vis_ = self.fwd_aff(input.view(seq_len * batch_size, self.hidden_dim))
         vis = vis_.view(seq_len, batch_size, self.hidden_dim)
